@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::errors::Result;
+use crate::error::Result;
 
 use globset::{Candidate, GlobBuilder, GlobMatcher};
 
@@ -23,6 +23,7 @@ impl<'a> SyntaxMapping<'a> {
     pub fn builtin() -> SyntaxMapping<'a> {
         let mut mapping = Self::empty();
         mapping.insert("*.h", MappingTarget::MapTo("C++")).unwrap();
+        mapping.insert("*.fs", MappingTarget::MapTo("F#")).unwrap();
         mapping
             .insert("build", MappingTarget::MapToUnknown)
             .unwrap();
@@ -31,10 +32,49 @@ impl<'a> SyntaxMapping<'a> {
             .unwrap();
         mapping
             .insert(
+                "**/bat/config",
+                MappingTarget::MapTo("Bourne Again Shell (bash)"),
+            )
+            .unwrap();
+        mapping
+            .insert(
                 "/etc/profile",
                 MappingTarget::MapTo("Bourne Again Shell (bash)"),
             )
             .unwrap();
+
+        // See #1008
+        mapping
+            .insert("rails", MappingTarget::MapToUnknown)
+            .unwrap();
+
+        for glob in [
+            "**/systemd/**/*.conf",
+            "**/systemd/**/*.example",
+            "*.automount",
+            "*.device",
+            "*.dnssd",
+            "*.link",
+            "*.mount",
+            "*.netdev",
+            "*.network",
+            "*.nspawn",
+            "*.path",
+            "*.service",
+            "*.scope",
+            "*.slice",
+            "*.socket",
+            "*.swap",
+            "*.target",
+            "*.timer",
+        ].iter() {
+            mapping
+                .insert(glob, MappingTarget::MapTo("INI"))
+                .unwrap();
+        }
+
+        // pacman hooks
+        mapping.insert("*.hook", MappingTarget::MapTo("INI")).unwrap();
 
         mapping
     }
@@ -46,6 +86,10 @@ impl<'a> SyntaxMapping<'a> {
             .build()?;
         self.mappings.push((glob.compile_matcher(), to));
         Ok(())
+    }
+
+    pub fn mappings(&self) -> &[(GlobMatcher, MappingTarget<'a>)] {
+        &self.mappings
     }
 
     pub(crate) fn get_syntax_for(&self, path: impl AsRef<Path>) -> Option<MappingTarget<'a>> {

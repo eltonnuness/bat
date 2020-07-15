@@ -2,11 +2,11 @@ use std::io::{self, Write};
 #[cfg(feature = "paging")]
 use std::process::Child;
 
-#[cfg(feature = "paging")]
-use crate::config::PagingMode;
-use crate::errors::*;
+use crate::error::*;
 #[cfg(feature = "paging")]
 use crate::less::retrieve_less_version;
+#[cfg(feature = "paging")]
+use crate::paging::PagingMode;
 
 #[derive(Debug)]
 pub enum OutputType {
@@ -86,11 +86,16 @@ impl OutputType {
                         // versions of 'less'. Unfortunately, it also breaks mouse-wheel support.
                         //
                         // See: http://www.greenwoodsoftware.com/less/news.530.html
+                        //
+                        // For newer versions (530 or 558 on Windows), we omit '--no-init' as it
+                        // is not needed anymore.
                         match retrieve_less_version() {
                             None => {
                                 p.arg("--no-init");
                             }
-                            Some(version) if version < 530 => {
+                            Some(version)
+                                if (version < 530 || (cfg!(windows) && version < 558)) =>
+                            {
                                 p.arg("--no-init");
                             }
                             _ => {}
@@ -118,6 +123,20 @@ impl OutputType {
 
     pub(crate) fn stdout() -> Self {
         OutputType::Stdout(io::stdout())
+    }
+
+    #[cfg(feature = "paging")]
+    pub(crate) fn is_pager(&self) -> bool {
+        if let OutputType::Pager(_) = self {
+            true
+        } else {
+            false
+        }
+    }
+
+    #[cfg(not(feature = "paging"))]
+    pub(crate) fn is_pager(&self) -> bool {
+        false
     }
 
     pub fn handle(&mut self) -> Result<&mut dyn Write> {

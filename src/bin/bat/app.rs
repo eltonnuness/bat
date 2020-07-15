@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::env;
+use std::ffi::OsStr;
 use std::str::FromStr;
 
 use atty::{self, Stream};
@@ -12,13 +13,15 @@ use clap::ArgMatches;
 
 use console::Term;
 
+use crate::input::{new_file_input, new_stdin_input};
 use bat::{
-    config::{
-        Config, HighlightedLineRanges, InputFile, LineRange, LineRanges, MappingTarget, OutputWrap,
-        PagingMode, StyleComponent, StyleComponents, SyntaxMapping,
-    },
-    errors::*,
-    HighlightingAssets,
+    assets::HighlightingAssets,
+    config::{Config, VisibleLines},
+    error::*,
+    input::Input,
+    line_range::{HighlightedLineRanges, LineRange, LineRanges},
+    style::{StyleComponent, StyleComponents},
+    MappingTarget, PagingMode, SyntaxMapping, WrappingMode,
 };
 
 fn is_truecolor_terminal() -> bool {
@@ -72,18 +75,19 @@ impl App {
         Ok(clap_app::build_app(interactive_output).get_matches_from(args))
     }
 
-    pub fn config(&self) -> Result<Config> {
-        let files = self.files();
+    pub fn config(&self, inputs: &[Input]) -> Result<Config> {
         let style_components = self.style_components()?;
 
         let paging_mode = match self.matches.value_of("paging") {
             Some("always") => PagingMode::Always,
             Some("never") => PagingMode::Never,
-            Some("auto") | _ => {
+            Some("auto") | None => {
                 if self.matches.occurrences_of("plain") > 1 {
                     // If we have -pp as an option when in auto mode, the pager should be disabled.
                     PagingMode::Never
-                } else if files.contains(&InputFile::StdIn) {
+                } else if self.matches.is_present("no-paging") {
+                    PagingMode::Never
+                } else if inputs.iter().any(Input::is_stdin) {
                     // If we are reading from stdin, only enable paging if we write to an
                     // interactive terminal and if we do not *read* from an interactive
                     // terminal.
@@ -98,6 +102,7 @@ impl App {
                     PagingMode::Never
                 }
             }
+            _ => unreachable!("other values for --paging are not allowed"),
         };
 
         let mut syntax_mapping = SyntaxMapping::builtin();
@@ -132,13 +137,6 @@ impl App {
             }
         });
 
-        match self.matches.values_of("file-name") {
-            Some(ref filenames) if filenames.len() != files.len() => {
-                return Err(format!("{} {}", filenames.len(), files.len()).into());
-            }
-            _ => {}
-        }
-
         Ok(Config {
             true_color: is_truecolor_terminal(),
             language: self.matches.value_of("language").or_else(|| {
@@ -149,34 +147,34 @@ impl App {
                 }
             }),
             show_nonprintable: self.matches.is_present("show-all"),
-            output_wrap: if self.interactive_output || maybe_term_width.is_some() {
+            wrapping_mode: if self.interactive_output || maybe_term_width.is_some() {
                 match self.matches.value_of("wrap") {
-                    Some("character") => OutputWrap::Character,
-                    Some("never") => OutputWrap::None,
-                    Some("auto") | _ => {
+                    Some("character") => WrappingMode::Character,
+                    Some("never") => WrappingMode::NoWrapping,
+                    Some("auto") | None => {
                         if style_components.plain() {
-                            OutputWrap::None
+                            WrappingMode::NoWrapping
                         } else {
-                            OutputWrap::Character
+                            WrappingMode::Character
                         }
                     }
+                    _ => unreachable!("other values for --paging are not allowed"),
                 }
             } else {
                 // We don't have the tty width when piping to another program.
                 // There's no point in wrapping when this is the case.
-                OutputWrap::None
+                WrappingMode::NoWrapping
             },
             colored_output: match self.matches.value_of("color") {
                 Some("always") => true,
                 Some("never") => false,
-                Some("auto") | _ => self.interactive_output,
+                Some("auto") | _ => env::var_os("NO_COLOR").is_none() && self.interactive_output,
             },
             paging_mode,
             term_width: maybe_term_width.unwrap_or(Term::stdout().size().1 as usize),
             loop_through: !(self.interactive_output
                 || self.matches.value_of("color") == Some("always")
                 || self.matches.value_of("decorations") == Some("always")),
-            files,
             tab_width: self
                 .matches
                 .value_of("tabs")
@@ -203,13 +201,24 @@ impl App {
                     }
                 })
                 .unwrap_or_else(|| String::from(HighlightingAssets::default_theme())),
-            line_ranges: self
-                .matches
-                .values_of("line-range")
-                .map(|vs| vs.map(LineRange::from).collect())
-                .transpose()?
-                .map(LineRanges::from)
-                .unwrap_or_default(),
+            visible_lines: match self.matches.is_present("diff") {
+                #[cfg(feature = "git")]
+                true => VisibleLines::DiffContext(
+                    self.matches
+                        .value_of("diff-context")
+                        .and_then(|t| t.parse().ok())
+                        .unwrap_or(2),
+                ),
+
+                _ => VisibleLines::Ranges(
+                    self.matches
+                        .values_of("line-range")
+                        .map(|vs| vs.map(LineRange::from).collect())
+                        .transpose()?
+                        .map(LineRanges::from)
+                        .unwrap_or_default(),
+                ),
+            },
             style_components,
             syntax_mapping,
             pager: self.matches.value_of("pager"),
@@ -225,28 +234,52 @@ impl App {
                 .map(LineRanges::from)
                 .map(|lr| HighlightedLineRanges(lr))
                 .unwrap_or_default(),
-            filenames: self
-                .matches
-                .values_of("file-name")
-                .map(|values| values.collect()),
         })
     }
 
-    fn files(&self) -> Vec<InputFile> {
-        self.matches
-            .values_of_os("FILE")
-            .map(|values| {
-                values
-                    .map(|filename| {
-                        if filename == "-" {
-                            InputFile::StdIn
-                        } else {
-                            InputFile::Ordinary(filename)
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_else(|| vec![InputFile::StdIn])
+    pub fn inputs(&self) -> Result<Vec<Input>> {
+        // verify equal length of file-names and input FILEs
+        match self.matches.values_of("file-name") {
+            Some(ref filenames)
+                if self.matches.values_of_os("FILE").is_some()
+                    && filenames.len() != self.matches.values_of_os("FILE").unwrap().len() =>
+            {
+                return Err("Must be one file name per input type.".into());
+            }
+            _ => {}
+        }
+        let filenames: Option<Vec<&str>> = self
+            .matches
+            .values_of("file-name")
+            .map(|values| values.collect());
+
+        let mut filenames_or_none: Box<dyn Iterator<Item = _>> = match filenames {
+            Some(ref filenames) => Box::new(filenames.iter().map(|name| Some(OsStr::new(*name)))),
+            None => Box::new(std::iter::repeat(None)),
+        };
+        let files: Option<Vec<&OsStr>> = self.matches.values_of_os("FILE").map(|vs| vs.collect());
+
+        if files.is_none() {
+            return Ok(vec![new_stdin_input(
+                filenames_or_none.next().unwrap_or(None),
+            )]);
+        }
+        let files_or_none: Box<dyn Iterator<Item = _>> = match files {
+            Some(ref files) => Box::new(files.iter().map(|name| Some(*name))),
+            None => Box::new(std::iter::repeat(None)),
+        };
+
+        let mut file_input = Vec::new();
+        for (filepath, provided_name) in files_or_none.zip(filenames_or_none) {
+            if let Some(filepath) = filepath {
+                if filepath.to_str().unwrap_or_default() == "-" {
+                    file_input.push(new_stdin_input(provided_name));
+                } else {
+                    file_input.push(new_file_input(filepath, provided_name));
+                }
+            }
+        }
+        Ok(file_input)
     }
 
     fn style_components(&self) -> Result<StyleComponents> {
@@ -255,7 +288,7 @@ impl App {
             if matches.value_of("decorations") == Some("never") {
                 HashSet::new()
             } else if matches.is_present("number") {
-                [StyleComponent::Numbers].iter().cloned().collect()
+                [StyleComponent::LineNumbers].iter().cloned().collect()
             } else if matches.is_present("plain") {
                 [StyleComponent::Plain].iter().cloned().collect()
             } else {

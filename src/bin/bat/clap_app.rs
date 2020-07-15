@@ -1,14 +1,15 @@
 use clap::{crate_name, crate_version, App as ClapApp, AppSettings, Arg, ArgGroup, SubCommand};
+use std::env;
 use std::path::Path;
 
 pub fn build_app(interactive_output: bool) -> ClapApp<'static, 'static> {
-    let clap_color_setting = if interactive_output {
+    let clap_color_setting = if interactive_output && env::var_os("NO_COLOR").is_none() {
         AppSettings::ColoredHelp
     } else {
         AppSettings::ColorNever
     };
 
-    let app = ClapApp::new(crate_name!())
+    let mut app = ClapApp::new(crate_name!())
         .version(crate_version!())
         .global_setting(clap_color_setting)
         .global_setting(AppSettings::DeriveDisplayOrder)
@@ -44,7 +45,7 @@ pub fn build_app(interactive_output: bool) -> ClapApp<'static, 'static> {
                 .long_help(
                     "Show non-printable characters like space, tab or newline. \
                      This option can also be used to print binary files. \
-                     Use '--tabs' to control the width of the tab-placeholders."
+                     Use '--tabs' to control the width of the tab-placeholders.",
                 ),
         )
         .arg(
@@ -90,7 +91,7 @@ pub fn build_app(interactive_output: bool) -> ClapApp<'static, 'static> {
                      '--highlight-line 40' highlights line 40\n  \
                      '--highlight-line 30:40' highlights lines 30 to 40\n  \
                      '--highlight-line :40' highlights lines 1 to 40\n  \
-                     '--highlight-line 40:' highlights lines 40 to the end of the file"
+                     '--highlight-line 40:' highlights lines 40 to the end of the file",
                 ),
         )
         .arg(
@@ -101,30 +102,67 @@ pub fn build_app(interactive_output: bool) -> ClapApp<'static, 'static> {
                 .multiple(true)
                 .value_name("name")
                 .help("Specify the name to display for a file.")
-                .long_help("Specify the name to display for a file. Useful when piping \
-                            data to bat from STDIN when bat does not otherwise know \
-                            the filename."),
-        )
-        .arg(
-            Arg::with_name("tabs")
-                .long("tabs")
-                .overrides_with("tabs")
-                .takes_value(true)
-                .value_name("T")
-                .validator(
-                    |t| {
-                        t.parse::<u32>()
-                            .map_err(|_t| "must be a number")
-                            .map(|_t| ()) // Convert to Result<(), &str>
-                            .map_err(|e| e.to_string())
-                    }, // Convert to Result<(), String>
-                )
-                .help("Set the tab width to T spaces.")
                 .long_help(
-                    "Set the tab width to T spaces. Use a width of 0 to pass tabs through \
-                     directly",
+                    "Specify the name to display for a file. Useful when piping \
+                            data to bat from STDIN when bat does not otherwise know \
+                            the filename.",
                 ),
-        )
+        );
+
+    #[cfg(feature = "git")]
+    {
+        app = app
+                .arg(
+                    Arg::with_name("diff")
+                        .long("diff")
+                        .short("d")
+                        .help("Only show lines that have been added/removed/modified.")
+                        .long_help(
+                            "Only show lines that have been added/removed/modified with respect \
+                     to the Git index. Use --diff-context=N to control how much context you want to see.",
+                        ),
+                )
+                .arg(
+                    Arg::with_name("diff-context")
+                        .long("diff-context")
+                        .overrides_with("diff-context")
+                        .takes_value(true)
+                        .value_name("N")
+                        .validator(
+                            |n| {
+                                n.parse::<usize>()
+                                    .map_err(|_| "must be a number")
+                                    .map(|_| ()) // Convert to Result<(), &str>
+                                    .map_err(|e| e.to_string())
+                            }, // Convert to Result<(), String>
+                        )
+                        .hidden_short_help(true)
+                        .long_help(
+                            "Include N lines of context around added/removed/modified lines when using '--diff'.",
+                        ),
+                )
+    }
+
+    app = app.arg(
+        Arg::with_name("tabs")
+            .long("tabs")
+            .overrides_with("tabs")
+            .takes_value(true)
+            .value_name("T")
+            .validator(
+                |t| {
+                    t.parse::<u32>()
+                        .map_err(|_t| "must be a number")
+                        .map(|_t| ()) // Convert to Result<(), &str>
+                        .map_err(|e| e.to_string())
+                }, // Convert to Result<(), String>
+            )
+            .help("Set the tab width to T spaces.")
+            .long_help(
+                "Set the tab width to T spaces. Use a width of 0 to pass tabs through \
+                     directly",
+            ),
+    )
         .arg(
             Arg::with_name("wrap")
                 .long("wrap")
@@ -152,7 +190,7 @@ pub fn build_app(interactive_output: bool) -> ClapApp<'static, 'static> {
                         t.parse::<i32>()
                             .map_err(|_e| "must be an offset or number")
                             .and_then(|v| if v == 0 && !is_offset {
-                                Err("terminal width cannot be zero".into())
+                                Err("terminal width cannot be zero")
                             } else {
                                 Ok(())
                             })
@@ -227,16 +265,23 @@ pub fn build_app(interactive_output: bool) -> ClapApp<'static, 'static> {
                 .possible_values(&["auto", "never", "always"])
                 .default_value("auto")
                 .hide_default_value(true)
-                .help("Specify when to use the pager (*auto*, never, always).")
+                .help("Specify when to use the pager, or use `-P` to disable (*auto*, never, always).")
                 .long_help(
-                    "Specify when to use the pager. To control which pager \
-                     is used, set the PAGER or BAT_PAGER environment \
-                     variables (the latter takes precedence) or use the '--pager' option. \
-                     To disable the pager permanently, set BAT_PAGER to an empty string \
-                     or set '--paging=never' in the configuration file. \
-                     Possible values: *auto*, never, always.",
+                    "Specify when to use the pager. To disable the pager, use \
+                    --paging=never' or its alias,'-P'. To disable the pager permanently, \
+                    set BAT_PAGER to an empty string. To control which pager is used, see the \
+                    '--pager' option. Possible values: *auto*, never, always."
                 ),
         )
+        .arg(
+            Arg::with_name("no-paging")
+                .short("P")
+                .alias("no-pager")
+                .overrides_with("no-paging")
+                .hidden(true)
+                .hidden_short_help(true)
+                .help("Alias for '--paging=never'")
+            )
         .arg(
             Arg::with_name("pager")
                 .long("pager")
@@ -246,11 +291,10 @@ pub fn build_app(interactive_output: bool) -> ClapApp<'static, 'static> {
                 .hidden_short_help(true)
                 .help("Determine which pager to use.")
                 .long_help(
-                    "Determine which pager is used. This option will overwrite \
-                     the PAGER and BAT_PAGER environment variables. The default \
-                     pager is 'less'. To disable the pager completely, use the \
-                     '--paging' option. \
-                     Example: '--pager \"less -RF\"'.",
+                    "Determine which pager is used. This option will override the \
+                    PAGER and BAT_PAGER environment variables. The default pager is 'less'. \
+                    To control when the pager is used, see the '--paging' option. \
+                    Example: '--pager \"less -RF\"'."
                 ),
         )
         .arg(
@@ -305,7 +349,9 @@ pub fn build_app(interactive_output: bool) -> ClapApp<'static, 'static> {
                 .validator(|val| {
                     let mut invalid_vals = val.split(',').filter(|style| {
                         !&[
-                            "auto", "full", "plain", "changes", "header", "grid", "numbers", "snip"
+                            "auto", "full", "plain", "header", "grid", "numbers", "snip",
+                            #[cfg(feature = "git")]
+                                "changes",
                         ]
                             .contains(style)
                     });
@@ -339,6 +385,7 @@ pub fn build_app(interactive_output: bool) -> ClapApp<'static, 'static> {
                 .takes_value(true)
                 .number_of_values(1)
                 .value_name("N:M")
+                .conflicts_with("diff")
                 .help("Only print the lines from N to M.")
                 .long_help(
                     "Only print the specified range of lines for each file. \

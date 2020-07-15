@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::BufReader;
 use std::path::Path;
@@ -7,8 +8,11 @@ use syntect::dumps::{dump_to_file, from_binary, from_reader};
 use syntect::highlighting::{Theme, ThemeSet};
 use syntect::parsing::{SyntaxReference, SyntaxSet, SyntaxSetBuilder};
 
-use crate::errors::*;
-use crate::inputfile::{InputFile, InputFileReader};
+use path_abs::PathAbs;
+
+use crate::assets_metadata::AssetsMetadata;
+use crate::error::*;
+use crate::input::{InputReader, OpenedInput, OpenedInputKind};
 use crate::syntax_mapping::{MappingTarget, SyntaxMapping};
 
 #[derive(Debug)]
@@ -67,8 +71,11 @@ impl HighlightingAssets {
         })
     }
 
-    pub fn from_cache(theme_set_path: &Path, syntax_set_path: &Path) -> Result<Self> {
-        let syntax_set_file = File::open(syntax_set_path).chain_err(|| {
+    pub fn from_cache(cache_path: &Path) -> Result<Self> {
+        let syntax_set_path = cache_path.join("syntaxes.bin");
+        let theme_set_path = cache_path.join("themes.bin");
+
+        let syntax_set_file = File::open(&syntax_set_path).chain_err(|| {
             format!(
                 "Could not load cached syntax set '{}'",
                 syntax_set_path.to_string_lossy()
@@ -112,7 +119,7 @@ impl HighlightingAssets {
         }
     }
 
-    pub fn save_to_cache(&self, target_dir: &Path) -> Result<()> {
+    pub fn save_to_cache(&self, target_dir: &Path, current_version: &str) -> Result<()> {
         let _ = fs::create_dir_all(target_dir);
         let theme_set_path = target_dir.join("themes.bin");
         let syntax_set_path = target_dir.join("syntaxes.bin");
@@ -141,6 +148,13 @@ impl HighlightingAssets {
         })?;
         println!("okay");
 
+        print!(
+            "Writing metadata to folder {} ... ",
+            target_dir.to_string_lossy()
+        );
+        AssetsMetadata::new(current_version).save_to_folder(target_dir)?;
+        println!("okay");
+
         Ok(())
     }
 
@@ -152,8 +166,8 @@ impl HighlightingAssets {
         self.syntax_set.syntaxes()
     }
 
-    pub fn themes(&self) -> impl Iterator<Item = &String> {
-        self.theme_set.themes.keys()
+    pub fn themes(&self) -> impl Iterator<Item = &str> {
+        self.theme_set.themes.keys().map(|s| s.as_ref())
     }
 
     pub(crate) fn get_theme(&self, theme: &str) -> &Theme {
@@ -168,7 +182,7 @@ impl HighlightingAssets {
                         theme
                     );
                 }
-                &self.theme_set.themes[self.fallback_theme.unwrap_or(Self::default_theme())]
+                &self.theme_set.themes[self.fallback_theme.unwrap_or_else(|| Self::default_theme())]
             }
         }
     }
@@ -176,64 +190,99 @@ impl HighlightingAssets {
     pub(crate) fn get_syntax(
         &self,
         language: Option<&str>,
-        filename: InputFile,
-        reader: &mut InputFileReader,
+        input: &mut OpenedInput,
         mapping: &SyntaxMapping,
-    ) -> &SyntaxReference {
-        let syntax = match (language, filename) {
-            (Some(language), _) => self.syntax_set.find_syntax_by_token(language),
-            (None, InputFile::Ordinary(filename)) => {
-                let path = Path::new(filename);
+    ) -> Result<&SyntaxReference> {
+        if let Some(language) = language {
+            self.syntax_set
+                .find_syntax_by_token(language)
+                .ok_or_else(|| ErrorKind::UnknownSyntax(language.to_owned()).into())
+        } else {
+            let line_syntax = self.get_first_line_syntax(&mut input.reader);
 
-                let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                let extension = path.extension().and_then(|x| x.to_str()).unwrap_or("");
+            // Get the path of the file:
+            // If this was set by the metadata, that will take priority.
+            // If it wasn't, it will use the real file path (if available).
+            let path_str =
+                input
+                    .metadata
+                    .user_provided_name
+                    .as_ref()
+                    .or_else(|| match input.kind {
+                        OpenedInputKind::OrdinaryFile(ref path) => Some(path),
+                        _ => None,
+                    });
 
-                let ext_syntax = self
-                    .syntax_set
-                    .find_syntax_by_extension(&file_name)
-                    .or_else(|| self.syntax_set.find_syntax_by_extension(&extension));
-                let line_syntax = String::from_utf8(reader.first_line.clone())
+            if let Some(path_str) = path_str {
+                // If a path was provided, we try and detect the syntax based on extension mappings.
+                let path = Path::new(path_str);
+                let absolute_path = PathAbs::new(path)
                     .ok()
-                    .and_then(|l| self.syntax_set.find_syntax_by_first_line(&l));
+                    .map(|p| p.as_path().to_path_buf())
+                    .unwrap_or_else(|| path.to_owned());
 
-                let absolute_path = path.canonicalize().ok().unwrap_or(path.to_owned());
                 match mapping.get_syntax_for(absolute_path) {
-                    Some(MappingTarget::MapTo(syntax_name)) => {
-                        // TODO: we should probably return an error here if this syntax can not be
-                        // found. Currently, we just fall back to 'plain'.
-                        self.syntax_set.find_syntax_by_name(syntax_name)
-                    }
-                    Some(MappingTarget::MapToUnknown) => line_syntax,
-                    None => ext_syntax.or(line_syntax),
-                }
-            }
-            (None, InputFile::StdIn) => String::from_utf8(reader.first_line.clone())
-                .ok()
-                .and_then(|l| self.syntax_set.find_syntax_by_first_line(&l)),
-            (_, InputFile::ThemePreviewFile) => self.syntax_set.find_syntax_by_name("Rust"),
-        };
+                    Some(MappingTarget::MapToUnknown) => line_syntax.ok_or_else(|| {
+                        ErrorKind::UndetectedSyntax(path.to_string_lossy().into()).into()
+                    }),
 
-        syntax.unwrap_or_else(|| self.syntax_set.find_syntax_plain_text())
+                    Some(MappingTarget::MapTo(syntax_name)) => self
+                        .syntax_set
+                        .find_syntax_by_name(syntax_name)
+                        .ok_or_else(|| ErrorKind::UnknownSyntax(syntax_name.to_owned()).into()),
+
+                    None => {
+                        let file_name = path.file_name().unwrap_or_default();
+                        self.get_extension_syntax(file_name)
+                            .or(line_syntax)
+                            .ok_or_else(|| {
+                                ErrorKind::UndetectedSyntax(path.to_string_lossy().into()).into()
+                            })
+                    }
+                }
+            } else {
+                // If a path wasn't provided, we fall back to the detect first-line syntax.
+                line_syntax.ok_or_else(|| ErrorKind::UndetectedSyntax("[unknown]".into()).into())
+            }
+        }
+    }
+
+    fn get_extension_syntax(&self, file_name: &OsStr) -> Option<&SyntaxReference> {
+        self.syntax_set
+            .find_syntax_by_extension(file_name.to_str().unwrap_or_default())
+            .or_else(|| {
+                self.syntax_set.find_syntax_by_extension(
+                    Path::new(file_name)
+                        .extension()
+                        .and_then(|x| x.to_str())
+                        .unwrap_or_default(),
+                )
+            })
+    }
+
+    fn get_first_line_syntax(&self, reader: &mut InputReader) -> Option<&SyntaxReference> {
+        String::from_utf8(reader.first_line.clone())
+            .ok()
+            .and_then(|l| self.syntax_set.find_syntax_by_first_line(&l))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::ffi::OsStr;
-    use std::fs::File;
-    use std::io;
-    use std::io::Write;
+    use super::*;
 
+    use std::ffi::OsStr;
+
+    use std::fs::File;
+    use std::io::Write;
     use tempdir::TempDir;
 
-    use crate::assets::HighlightingAssets;
-    use crate::inputfile::InputFile;
-    use crate::syntax_mapping::{MappingTarget, SyntaxMapping};
+    use crate::input::Input;
 
     struct SyntaxDetectionTest<'a> {
         assets: HighlightingAssets,
         pub syntax_mapping: SyntaxMapping<'a>,
-        temp_dir: TempDir,
+        pub temp_dir: TempDir,
     }
 
     impl<'a> SyntaxDetectionTest<'a> {
@@ -246,26 +295,80 @@ mod tests {
             }
         }
 
-        fn synax_for_file_with_content(&self, file_name: &str, first_line: &str) -> String {
+        fn syntax_for_real_file_with_content_os(
+            &self,
+            file_name: &OsStr,
+            first_line: &str,
+        ) -> String {
             let file_path = self.temp_dir.path().join(file_name);
             {
                 let mut temp_file = File::create(&file_path).unwrap();
                 writeln!(temp_file, "{}", first_line).unwrap();
             }
 
-            let input_file = InputFile::Ordinary(OsStr::new(&file_path));
-            let syntax = self.assets.get_syntax(
-                None,
-                input_file,
-                &mut input_file.get_reader(&io::stdin()).unwrap(),
-                &self.syntax_mapping,
-            );
+            let input = Input::ordinary_file(file_path.as_os_str());
+            let dummy_stdin: &[u8] = &[];
+            let mut opened_input = input.open(dummy_stdin).unwrap();
 
-            syntax.name.clone()
+            self.assets
+                .get_syntax(None, &mut opened_input, &self.syntax_mapping)
+                .unwrap_or_else(|_| self.assets.syntax_set.find_syntax_plain_text())
+                .name
+                .clone()
+        }
+
+        fn syntax_for_file_with_content_os(&self, file_name: &OsStr, first_line: &str) -> String {
+            let file_path = self.temp_dir.path().join(file_name);
+            let input = Input::from_reader(Box::new(BufReader::new(first_line.as_bytes())))
+                .with_name(Some(file_path.as_os_str()));
+            let dummy_stdin: &[u8] = &[];
+            let mut opened_input = input.open(dummy_stdin).unwrap();
+
+            self.assets
+                .get_syntax(None, &mut opened_input, &self.syntax_mapping)
+                .unwrap_or_else(|_| self.assets.syntax_set.find_syntax_plain_text())
+                .name
+                .clone()
+        }
+
+        #[cfg(unix)]
+        fn syntax_for_file_os(&self, file_name: &OsStr) -> String {
+            self.syntax_for_file_with_content_os(file_name, "")
+        }
+
+        fn syntax_for_file_with_content(&self, file_name: &str, first_line: &str) -> String {
+            self.syntax_for_file_with_content_os(OsStr::new(file_name), first_line)
         }
 
         fn syntax_for_file(&self, file_name: &str) -> String {
-            self.synax_for_file_with_content(file_name, "")
+            self.syntax_for_file_with_content(file_name, "")
+        }
+
+        fn syntax_for_stdin_with_content(&self, file_name: &str, content: &[u8]) -> String {
+            let input = Input::stdin().with_name(Some(OsStr::new(file_name)));
+            let mut opened_input = input.open(content).unwrap();
+
+            self.assets
+                .get_syntax(None, &mut opened_input, &self.syntax_mapping)
+                .unwrap_or_else(|_| self.assets.syntax_set.find_syntax_plain_text())
+                .name
+                .clone()
+        }
+
+        fn syntax_is_same_for_inputkinds(&self, file_name: &str, content: &str) -> bool {
+            let as_file = self.syntax_for_real_file_with_content_os(file_name.as_ref(), content);
+            let as_reader = self.syntax_for_file_with_content_os(file_name.as_ref(), content);
+            let consistent = as_file == as_reader;
+            // TODO: Compare StdIn somehow?
+
+            if !consistent {
+                eprintln!(
+                    "Inconsistent syntax detection:\nFor File: {}\nFor Reader: {}",
+                    as_file, as_reader
+                )
+            }
+
+            consistent
         }
     }
 
@@ -284,14 +387,48 @@ mod tests {
         assert_eq!(test.syntax_for_file("Makefile"), "Makefile");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn syntax_detection_invalid_utf8() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let test = SyntaxDetectionTest::new();
+
+        assert_eq!(
+            test.syntax_for_file_os(OsStr::from_bytes(b"invalid_\xFEutf8_filename.rs")),
+            "Rust"
+        );
+    }
+
+    #[test]
+    fn syntax_detection_same_for_inputkinds() {
+        let mut test = SyntaxDetectionTest::new();
+
+        test.syntax_mapping
+            .insert("*.myext", MappingTarget::MapTo("C"))
+            .ok();
+        test.syntax_mapping
+            .insert("MY_FILE", MappingTarget::MapTo("Markdown"))
+            .ok();
+
+        assert!(test.syntax_is_same_for_inputkinds("Test.md", ""));
+        assert!(test.syntax_is_same_for_inputkinds("Test.txt", "#!/bin/bash"));
+        assert!(test.syntax_is_same_for_inputkinds(".bashrc", ""));
+        assert!(test.syntax_is_same_for_inputkinds("test.h", ""));
+        assert!(test.syntax_is_same_for_inputkinds("test.js", "#!/bin/bash"));
+        assert!(test.syntax_is_same_for_inputkinds("test.myext", ""));
+        assert!(test.syntax_is_same_for_inputkinds("MY_FILE", ""));
+        assert!(test.syntax_is_same_for_inputkinds("MY_FILE", "<?php"));
+    }
+
     #[test]
     fn syntax_detection_well_defined_mapping_for_duplicate_extensions() {
         let test = SyntaxDetectionTest::new();
 
         assert_eq!(test.syntax_for_file("test.h"), "C++");
         assert_eq!(test.syntax_for_file("test.sass"), "Sass");
-        assert_eq!(test.syntax_for_file("test.hs"), "Haskell (improved)");
         assert_eq!(test.syntax_for_file("test.js"), "JavaScript (Babel)");
+        assert_eq!(test.syntax_for_file("test.fs"), "F#");
     }
 
     #[test]
@@ -299,15 +436,15 @@ mod tests {
         let test = SyntaxDetectionTest::new();
 
         assert_eq!(
-            test.synax_for_file_with_content("my_script", "#!/bin/bash"),
+            test.syntax_for_file_with_content("my_script", "#!/bin/bash"),
             "Bourne Again Shell (bash)"
         );
         assert_eq!(
-            test.synax_for_file_with_content("build", "#!/bin/bash"),
+            test.syntax_for_file_with_content("build", "#!/bin/bash"),
             "Bourne Again Shell (bash)"
         );
         assert_eq!(
-            test.synax_for_file_with_content("my_script", "<?php"),
+            test.syntax_for_file_with_content("my_script", "<?php"),
             "PHP"
         );
     }
@@ -332,5 +469,47 @@ mod tests {
             .insert("*.MD", MappingTarget::MapTo("Markdown"))
             .ok();
         assert_eq!(test.syntax_for_file("README.MD"), "Markdown");
+    }
+
+    #[test]
+    fn syntax_detection_stdin_filename() {
+        let test = SyntaxDetectionTest::new();
+
+        // from file extension
+        assert_eq!(test.syntax_for_stdin_with_content("test.cpp", b"a"), "C++");
+        // from first line (fallback)
+        assert_eq!(
+            test.syntax_for_stdin_with_content("my_script", b"#!/bin/bash"),
+            "Bourne Again Shell (bash)"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn syntax_detection_for_symlinked_file() {
+        use std::os::unix::fs::symlink;
+
+        let test = SyntaxDetectionTest::new();
+        let file_path = test.temp_dir.path().join("my_ssh_config_filename");
+        {
+            File::create(&file_path).unwrap();
+        }
+        let file_path_symlink = test.temp_dir.path().join(".ssh").join("config");
+
+        std::fs::create_dir(test.temp_dir.path().join(".ssh"))
+            .expect("creation of directory succeeds");
+        symlink(&file_path, &file_path_symlink).expect("creation of symbolic link succeeds");
+
+        let input = Input::ordinary_file(file_path_symlink.as_os_str());
+        let dummy_stdin: &[u8] = &[];
+        let mut opened_input = input.open(dummy_stdin).unwrap();
+
+        assert_eq!(
+            test.assets
+                .get_syntax(None, &mut opened_input, &test.syntax_mapping)
+                .unwrap_or_else(|_| test.assets.syntax_set.find_syntax_plain_text())
+                .name,
+            "SSH Config"
+        );
     }
 }

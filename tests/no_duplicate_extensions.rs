@@ -1,22 +1,21 @@
 use std::collections::HashSet;
 
-use bat::HighlightingAssets;
+use bat::assets::HighlightingAssets;
 
 #[test]
 fn no_duplicate_extensions() {
-    const KNOWN_EXCEPTIONS: &[&'static str] = &[
+    const KNOWN_EXCEPTIONS: &[&str] = &[
         // The '.h' extension currently appears in multiple syntaxes: C, C++, Objective C,
         // Objective C++
         "h",
-        // In addition to the standard Haskell syntax in 'Packages', we also ship the 'Cabal'
-        // syntax which comes with a "Haskell (improved)" syntax.
-        "hs",
         // In addition to the standard JavaScript syntax in 'Packages', we also ship the
         // 'Javascript (Babel)' syntax.
         "js",
         // The "Ruby Haml" syntax also comes with a '.sass' extension. However, we make sure
         // that 'sass' is mapped to the 'Sass' syntax.
         "sass",
+        // The '.fs' extension appears in F# and GLSL. We default to F#.
+        "fs",
     ];
 
     let assets = HighlightingAssets::from_binary();

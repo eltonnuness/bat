@@ -70,9 +70,6 @@
 [submodule "assets/syntaxes/JavaScript (Babel)"]
 	path = assets/syntaxes/02_Extra/JavaScript (Babel)
 	url = https://github.com/babel/babel-sublime
-[submodule "assets/syntaxes/Cabal"]
-	path = assets/syntaxes/02_Extra/Cabal
-	url = https://github.com/SublimeHaskell/SublimeHaskell
 [submodule "assets/syntaxes/Dart"]
 	path = assets/syntaxes/02_Extra/Dart
 	url = https://github.com/guillermooo/dart-sublime-bundle
@@ -97,9 +94,6 @@
 [submodule "assets/themes/sublime-snazzy"]
 	path = assets/themes/sublime-snazzy
 	url = https://github.com/greggb/sublime-snazzy
-[submodule "assets/syntaxes/AsciiDoc"]
-	path = assets/syntaxes/02_Extra/AsciiDoc
-	url = https://github.com/SublimeText/AsciiDoc.git
 [submodule "assets/syntaxes/Assembly (ARM)"]
 	path = assets/syntaxes/02_Extra/Assembly (ARM)
 	url = https://github.com/tvi/Sublime-ARM-Assembly
@@ -166,9 +160,6 @@
 [submodule "assets/themes/Nord-sublime"]
 	path = assets/themes/Nord-sublime
 	url = https://github.com/crabique/Nord-plist.git
-[submodule "assets/themes/solarized-sublime"]
-	path = assets/themes/solarized-sublime
-	url = https://github.com/paulcpederson/solarized-sublime.git
 [submodule "assets/syntaxes/Vue"]
 	path = assets/syntaxes/02_Extra/Vue
 	url = https://github.com/vuejs/vue-syntax-highlight.git
@@ -176,3 +167,27 @@
 [submodule "assets/syntaxes/CoffeeScript"]
 	path = assets/syntaxes/02_Extra/CoffeeScript
 	url = https://github.com/sustained/CoffeeScript-Sublime-Plugin
+[submodule "assets/syntaxes/02_Extra/Stylus"]
+	path = assets/syntaxes/02_Extra/Stylus
+	url = https://github.com/billymoon/Stylus
+[submodule "assets/themes/Solarized"]
+	path = assets/themes/Solarized
+	url = https://github.com/braver/Solarized
+[submodule "assets/syntaxes/02_Extra/Fortran"]
+	path = assets/syntaxes/02_Extra/Fortran
+	url = https://github.com/315234/SublimeFortran
+[submodule "assets/syntaxes/02_Extra/Email"]
+	path = assets/syntaxes/02_Extra/Email
+	url = https://github.com/mariozaizar/email.sublime-syntax.git
+[submodule "assets/syntaxes/02_Extra/QML"]
+	path = assets/syntaxes/02_Extra/QML
+	url = https://github.com/skozlovf/Sublime-QML
+[submodule "assets/syntaxes/02_Extra/AsciiDoc"]
+	path = assets/syntaxes/02_Extra/AsciiDoc
+	url = https://github.com/asciidoctor/sublimetext-asciidoc.git
+[submodule "assets/themes/gruvbox"]
+	path = assets/themes/gruvbox
+	url = https://github.com/peaceant/gruvbox.git
+[submodule "assets/syntaxes/02_Extra/GLSL"]
+	path = assets/syntaxes/02_Extra/GLSL
+	url = https://github.com/euler0/sublime-glsl

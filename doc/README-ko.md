@@ -170,7 +170,7 @@ apt install bat
 만약 최근 릴리즈된 bat을 사용을 원하거나 buntu/Debian 예전 버전을 사용하는 경우, [릴리즈 페이지](https://github.com/sharkdp/bat/releases)에서 다음과 같이 `.deb` 패키지를 받아 설치 할 수도 있습니다:
 
 ```bash
-sudo dpkg -i bat_0.13.0_amd64.deb  # adapt version number and architecture
+sudo dpkg -i bat_0.15.4_amd64.deb  # adapt version number and architecture
 ```
 
 ### On Alpine Linux
@@ -327,7 +327,7 @@ ansible-galaxy install aeimer.install_bat
 `bat`의 소스를 직접 빌드하기 위해서는, Rust 1.36 이상이 필요하며 `cargo`를 이용해 빌드할 수 있습니다. 
 
 ```bash
-cargo install bat
+cargo install --locked bat
 ```
 
 일부 플랫폼에서는 `llvm` 그리고/또는 `libclang-dev` 설치가 필요할 수도 있습니다. 
@@ -528,11 +528,11 @@ cargo build --bins
 cargo test
 
 # Install (release version)
-cargo install
+cargo install --locked
 
 # Build a bat binary with modified syntaxes and themes
 bash assets/create.sh
-cargo install -f
+cargo install --locked --force
 ```
 
 ## 메인테이너들

@@ -6,27 +6,39 @@ mod assets;
 mod clap_app;
 mod config;
 mod directories;
+mod input;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::io;
-use std::io::Write;
+use std::io::{BufReader, Write};
 use std::path::Path;
 use std::process;
 
 use ansi_term::Colour::Green;
 use ansi_term::Style;
 
-use crate::{app::App, config::{config_file, generate_config_file}};
+use crate::{
+    app::App,
+    config::{config_file, generate_config_file},
+};
+
 use assets::{assets_from_cache_or_binary, cache_dir, clear_assets, config_dir};
-use bat::Controller;
+use clap::crate_version;
 use directories::PROJECT_DIRS;
+use globset::GlobMatcher;
 
 use bat::{
-    config::{Config, InputFile, StyleComponent, StyleComponents},
-    errors::*,
-    HighlightingAssets,
+    assets::HighlightingAssets,
+    config::Config,
+    controller::Controller,
+    error::*,
+    input::Input,
+    style::{StyleComponent, StyleComponents},
+    MappingTarget,
 };
+
+const THEME_PREVIEW_DATA: &[u8] = include_bytes!("../../../assets/theme_preview.rs");
 
 fn run_cache_subcommand(matches: &clap::ArgMatches) -> Result<()> {
     if matches.is_present("build") {
@@ -42,7 +54,7 @@ fn run_cache_subcommand(matches: &clap::ArgMatches) -> Result<()> {
         let blank = matches.is_present("blank");
 
         let assets = HighlightingAssets::from_files(source_dir, !blank)?;
-        assets.save_to_cache(target_dir)?;
+        assets.save_to_cache(target_dir, crate_version!())?;
     } else if matches.is_present("clear") {
         clear_assets();
     }
@@ -50,21 +62,47 @@ fn run_cache_subcommand(matches: &clap::ArgMatches) -> Result<()> {
     Ok(())
 }
 
+fn get_syntax_mapping_to_paths<'a>(
+    mappings: &[(GlobMatcher, MappingTarget<'a>)],
+) -> HashMap<&'a str, Vec<String>> {
+    let mut map = HashMap::new();
+    for mapping in mappings {
+        match mapping {
+            (_, MappingTarget::MapToUnknown) => {}
+            (matcher, MappingTarget::MapTo(s)) => {
+                let globs = map.entry(*s).or_insert_with(Vec::new);
+                globs.push(matcher.glob().glob().into());
+            }
+        }
+    }
+    map
+}
+
 pub fn list_languages(config: &Config) -> Result<()> {
-    let assets = assets_from_cache_or_binary();
+    let assets = assets_from_cache_or_binary()?;
     let mut languages = assets
         .syntaxes()
         .iter()
         .filter(|syntax| !syntax.hidden && !syntax.file_extensions.is_empty())
+        .cloned()
         .collect::<Vec<_>>();
     languages.sort_by_key(|lang| lang.name.to_uppercase());
+
+    let configured_languages = get_syntax_mapping_to_paths(config.syntax_mapping.mappings());
+
+    for lang in languages.iter_mut() {
+        if let Some(additional_paths) = configured_languages.get(lang.name.as_str()) {
+            lang.file_extensions
+                .extend(additional_paths.iter().cloned());
+        }
+    }
 
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
 
     if config.loop_through {
         for lang in languages {
-            write!(stdout, "{}:{}\n", lang.name, lang.file_extensions.join(","))?;
+            writeln!(stdout, "{}:{}", lang.name, lang.file_extensions.join(","))?;
         }
     } else {
         let longest = languages
@@ -112,12 +150,16 @@ pub fn list_languages(config: &Config) -> Result<()> {
     Ok(())
 }
 
+fn theme_preview_file<'a>() -> Input<'a> {
+    Input::from_reader(Box::new(BufReader::new(THEME_PREVIEW_DATA)))
+}
+
 pub fn list_themes(cfg: &Config) -> Result<()> {
-    let assets = assets_from_cache_or_binary();
+    let assets = assets_from_cache_or_binary()?;
     let mut config = cfg.clone();
     let mut style = HashSet::new();
     style.insert(StyleComponent::Plain);
-    config.files = vec![InputFile::ThemePreviewFile];
+    config.language = Some("Rust");
     config.style_components = StyleComponents(style);
 
     let stdout = io::stdout();
@@ -131,7 +173,9 @@ pub fn list_themes(cfg: &Config) -> Result<()> {
                 Style::new().bold().paint(theme.to_string())
             )?;
             config.theme = theme.to_string();
-            let _controller = Controller::new(&config, &assets).run();
+            Controller::new(&config, &assets)
+                .run(vec![theme_preview_file()])
+                .ok();
             writeln!(stdout)?;
         }
     } else {
@@ -143,10 +187,10 @@ pub fn list_themes(cfg: &Config) -> Result<()> {
     Ok(())
 }
 
-fn run_controller(config: &Config) -> Result<bool> {
-    let assets = assets_from_cache_or_binary();
+fn run_controller(inputs: Vec<Input>, config: &Config) -> Result<bool> {
+    let assets = assets_from_cache_or_binary()?;
     let controller = Controller::new(&config, &assets);
-    controller.run()
+    controller.run(inputs)
 }
 
 /// Returns `Err(..)` upon fatal errors. Otherwise, returns `Ok(true)` on full success and
@@ -163,14 +207,15 @@ fn run() -> Result<bool> {
                 run_cache_subcommand(cache_matches)?;
                 Ok(true)
             } else {
-                let mut config = app.config()?;
-                config.files = vec![InputFile::Ordinary(OsStr::new("cache"))];
+                let inputs = vec![Input::ordinary_file(OsStr::new("cache"))];
+                let config = app.config(&inputs)?;
 
-                run_controller(&config)
+                run_controller(inputs, &config)
             }
         }
         _ => {
-            let config = app.config()?;
+            let inputs = app.inputs()?;
+            let config = app.config(&inputs)?;
 
             if app.matches.is_present("list-languages") {
                 list_languages(&config)?;
@@ -191,7 +236,7 @@ fn run() -> Result<bool> {
                 writeln!(io::stdout(), "{}", cache_dir())?;
                 Ok(true)
             } else {
-                run_controller(&config)
+                run_controller(inputs, &config)
             }
         }
     }
@@ -202,7 +247,8 @@ fn main() {
 
     match result {
         Err(error) => {
-            default_error_handler(&error);
+            let stderr = std::io::stderr();
+            default_error_handler(&error, &mut stderr.lock());
             process::exit(1);
         }
         Ok(false) => {

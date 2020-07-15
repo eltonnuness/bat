@@ -1,20 +1,150 @@
-# Upcoming release
+# unreleased
+
+## Features
+
+- Added support for the `NO_COLOR` environment variable, see #1021 and #1031 (@eth-p)
+- Added `-P` short flag to disable paging, revised man page description, see #1075 and #1082 (@LordFlashmeow) 
+
+## Bugfixes
+
+- Fixed non-printable characters display for redirected output, see #1061 (@gsomix)
+
+## Other
+- Switched to "·" (U+00B7) Middle Dot from "•" (U+2022) Bullet for non-printing spaces, see #1056 and #1100 (@LordFlashmeow)
+
+## Syntaxes
+
+- Update AsciiDoc syntax, see #1034 (@rxt1077)
+- GLSL (@caioalonso)
+
+## New themes
+
+- Gruvbox, see #1069 (@kyleondy)
+
+## `bat` as a library
+
+- Add APIs to provide `Input` descriptions with `InputDescription` (@eth-p)
+- Add function to directly provide `Input`s to `PrettyPrinter` (@eth-p)
+- **Breaking:** `Input::theme_preview_file` is no longer available. (@eth-p)
+
+## Packaging
+
+# v0.15.4
+
+## Bugfixes
+
+- Added missing Solarized themes, see #1027
+- Fixed highlighting bug in Haskell source files, see #1026
+
+# v0.15.3
+
+## Bugfixes
+
+- Cannot run `bat` with relative paths, see #1022
+- bat mishighlights Users that start with digits in SSH config, see #984
+
+## New syntaxes
+
+- SML, see #1005 (@kopecs)
+
+## Other
+
+- Some syntaxes and themes have been updated to the latest version
+
+# v0.15.2
+
+## Bugfixes
+
+- Fix syntax detection for files called 'rails', see #1008
+- Fix potential errors with syntax detection for symlinked files, see #1001
+- `--map-syntax` doesn't work with names provided through `--file-name` (@eth-p)
+
+## Other
+
+- Add padding above headers when not using a grid, see #968 and #981 (@pt2121)
+- bat now prints an error if an invalid syntax is specified via `-l` or `--map-syntax`, see #1004 (@eth-p)
+
+## `bat` as a library
+
+- `PrettyPrinter::vcs_modification_markers` has been marked deprecated when building without the `git` feature, see #997 and #1020 (@eth-p, @sharkdp)
+
+## Packaging
+
+- Compilation problems with `onig_sys` on various platforms have been resolved by upgrading to `syntect 4.2`, which includes a new `onig` version that allows to build `onig_sys` without the `bindgen` dependency. This removes the need for `libclang(-dev)` to be installed to compile `bat`. Package maintainers might want to remove `clang` as a build dependency. See #650 for more details.
+
+# v0.15.1
+
+## Bugfixes
+
+- Fix highlighting of Markdown files, see #963 and #977
+- Fix `base16` theme (was broken since in v0.14), see #972, #934 and #979 (@mk12).
+  Users suffering from #865 ("no color for bat in ssh from a Windows client") can use the `ansi-dark` and `ansi-light` themes from now on.
+
+## New syntaxes
+
+- Fortran, see #957
+- Email (@mariozaizar)
+- QML, see #962 (@pylipp)
+
+# v0.15.0
+
+## Features
+
+- Add a new `--diff`/`-d` option that can be used to only show lines surrounding
+  Git changes, i.e. added, removed or modified lines. The amount of additional
+  context can be controlled with `--diff-context=N`. See #23 and #940
+
+## Bugfixes
+
+- Error message printed in the middle of the output for another file, see #946
+- Performance improvements when using custom caches (via `bat cache --build`): the `bat` startup time should now be twice as fast (@lzutao).
+
+## Themes
+
+- Updated version of the Solarized dark/light themes, see #941
+
+## `bat` as a library
+
+- There are a few changes in the "low level" API (the `Config` struct has changed and
+  the error handler needs a new `&mut dyn Write` argument). The high-level API is not
+  affected.
+
+# v0.14.0
 
 ## Features
 
 - Added a new `--file-name <name>…` option to overwrite the displayed filename(s)
-  in the header. This is useful when piping input into `bat`. See #654 (@neuronull).
-- Added a new `--generate-config-file` option to creat an initial configuration file
+  in the header. This is useful when piping input into `bat`. See #654 and #892 (@neuronull).
+- Added a new `--generate-config-file` option to create an initial configuration file
   at the right place. See #870 (@jmick414)
 
 ## Bugfixes
 
+- Performance problems with C# source code have been fixed, see #677 (@keith-hall)
+- Performance problems with Makefiles have been fixed, see #750 (@keith-hall)
+- Fix bug when highlighting Ruby files with unindented heredocs, see #914 (@keith-hall)
+- A highlighting problem with Rust source code has been fixed, see #924 (@keith-hall)
+- Windows: short files that do not require paging are displayed and then lost, see #887
+- `--highlight-line` did not work correctly in combination with `--tabs=0` and `--wrap=never`,
+  see #937
+
 ## Other
 
+- When saving/reading user-provided syntaxes or themes, `bat` will now maintain a
+  `metadata.yaml` file which includes information about the `bat` version which was
+  used to create the cached files. When loading cached files, we now print an error
+  if they have been created with an incompatible version. See #882
 - Updated `liquid` dependency to 0.20, see #880 (@ignatenkobrain)
 
 ## `bat` as a library
 
+- A completely new "high level" API has been added that is much more convenient
+  to use. See the `examples` folder for the updated code. The older "low level"
+  API is still available (basically everything that is not in the root `bat`
+  module), but has been refactored quite a bit. It is recommended to only use
+  the new "high level" API, if possible. This will be much easier to keep stable.
+  Note that this should still be considered a "beta" release of `bat`-as-a-library.
+  For more details and some screenshots of the example programs, see #936.
 - Stripped out a lot of binary-only dependencies, see #895 and #899 (@dtolnay)
 
   This introduces a `features = ["application"]` which is enabled by default and pulls in
@@ -22,7 +152,7 @@
   `Cargo.toml` should disable this feature to cut out inapplicable heavy dependencies:
   ``` toml
   [dependencies]
-  bat = { version = "0.13", default-features = false }
+  bat = { version = "0.14", default-features = false }
   ```
   Other optional functionality has also been put behind features: `paging` and `git` support.
 - Allow using the library with older syntect, see #896 and #898 (@dtolnay)
@@ -30,11 +160,7 @@
 ## New syntaxes
 
 - Rego, see #872 (@patrick-east)
-
-## New themes
-
-## Packaging
-
+- Stylo, see #917
 
 
 # v0.13.0
@@ -386,7 +512,7 @@ You can see the API documentation here: https://docs.rs/bat/
 ## Bugfixes
 
 - Bat Panics on Haskell Source Code, see #314
-- Disable wrapping when `--style=plain`/`-p` is used, see #289 
+- Disable wrapping when `--style=plain`/`-p` is used, see #289
 
 ## Other
 
@@ -441,7 +567,7 @@ You can see the API documentation here: https://docs.rs/bat/
 ## Bugfixes
 
 - Fixed panic when running `bat --list-languages | head`, see #232 (@mchlrhw)
-- Respect `--color` settings for `--list-themes` and `--list-languages`, see #233 
+- Respect `--color` settings for `--list-themes` and `--list-languages`, see #233
 - Git modifications now work on Windows
 
 ## Other
@@ -471,7 +597,7 @@ You can see the API documentation here: https://docs.rs/bat/
 ## Other
 
 * Extended and cleaned-up `--help` text.
-* Added initial version of a man page, see #52  
+* Added initial version of a man page, see #52
 * New README sections: *Development* and *Troubleshooting*, see #220
 
 # v0.5.0
@@ -486,18 +612,18 @@ You can see the API documentation here: https://docs.rs/bat/
 
 ## Changes
 
-- The customization of syntax sets and theme sets is now separated. Syntax definitions are now loaded *in addition* to the ones that are stored in the `bat` binary by default. Please refer to these new sections in the README: [Adding new syntaxes](https://github.com/sharkdp/bat#adding-new-syntaxes--language-definitions), [Adding new themes](https://github.com/sharkdp/bat#adding-new-themes), also see #172 
+- The customization of syntax sets and theme sets is now separated. Syntax definitions are now loaded *in addition* to the ones that are stored in the `bat` binary by default. Please refer to these new sections in the README: [Adding new syntaxes](https://github.com/sharkdp/bat#adding-new-syntaxes--language-definitions), [Adding new themes](https://github.com/sharkdp/bat#adding-new-themes), also see #172
 - The color for the filename is now the default foreground color. The colors for the grid and the line numbers is now determined from the syntax highlighting theme, which now also works for light backgrounds, see #178.
 
 ## Bugfixes
 
 - Escape Sequences get partially stripped, see #182 (@eth-p)
 - Use separate Git repository for snapshot testing, see #165 and #161
-- Markdown breaking on JavaScript, see #183 
+- Markdown breaking on JavaScript, see #183
 
 ## Other
 
-- Binaries for armv7 are now provided, see #196 
+- Binaries for armv7 are now provided, see #196
 - `bat` is now in the official [Arch package repositories](https://www.archlinux.org/packages/community/x86_64/bat/).
 - Optimizations in the RGB => 8-bit conversion (@mina86)
 
@@ -507,7 +633,7 @@ You can see the API documentation here: https://docs.rs/bat/
 
 ## Bugfixes
 
-- Fix problem with `cargo test` when `bat` is not checked out in a Git repository, see #161 
+- Fix problem with `cargo test` when `bat` is not checked out in a Git repository, see #161
 
 # v0.4.0
 

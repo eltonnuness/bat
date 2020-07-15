@@ -1,4 +1,9 @@
 use assert_cmd::Command;
+use predicates::{prelude::predicate,str::PredicateStrExt};
+use std::path::Path;
+use std::str::from_utf8;
+
+const EXAMPLES_DIR: &str = "tests/examples";
 
 fn bat_with_config() -> Command {
     let mut cmd = Command::cargo_bin("bat").unwrap();
@@ -373,7 +378,7 @@ fn pager_basic() {
         .arg("test.txt")
         .assert()
         .success()
-        .stdout("pager-output\n");
+        .stdout(predicate::eq("pager-output\n").normalize());
 }
 
 #[test]
@@ -385,7 +390,7 @@ fn pager_overwrite() {
         .arg("test.txt")
         .assert()
         .success()
-        .stdout("pager-output\n");
+        .stdout(predicate::eq("pager-output\n").normalize());
 }
 
 #[test]
@@ -397,7 +402,30 @@ fn pager_disable() {
         .arg("test.txt")
         .assert()
         .success()
-        .stdout("hello world\n");
+        .stdout(predicate::eq("hello world\n").normalize());
+}
+
+#[test]
+fn alias_pager_disable() {
+    bat()
+        .env("PAGER", "echo other-pager")
+        .arg("-P")
+        .arg("test.txt")
+        .assert()
+        .success()
+        .stdout(predicate::eq("hello world\n").normalize());
+}
+
+#[test]
+fn alias_pager_disable_long_overrides_short() {
+    bat()
+        .env("PAGER", "echo pager-output")
+        .arg("-P")
+        .arg("--paging=always")
+        .arg("test.txt")
+        .assert()
+        .success()
+        .stdout(predicate::eq("pager-output\n").normalize());
 }
 
 #[test]
@@ -417,7 +445,7 @@ fn config_read_arguments_from_file() {
         .arg("test.txt")
         .assert()
         .success()
-        .stdout("dummy-pager-from-config\n");
+        .stdout(predicate::eq("dummy-pager-from-config\n").normalize());
 }
 
 #[test]
@@ -611,7 +639,7 @@ fn filename_multiple_ok() {
         .arg("--file-name=bar")
         .assert()
         .success()
-        .stdout("File: foo\nFile: bar\n")
+        .stdout("File: foo\n\nFile: bar\n")
         .stderr("");
 }
 
@@ -626,4 +654,98 @@ fn filename_multiple_err() {
         .arg("single-line.txt")
         .assert()
         .failure();
+}
+
+#[test]
+fn header_padding() {
+    bat()
+        .arg("--decorations=always")
+        .arg("--style=header")
+        .arg("test.txt")
+        .arg("single-line.txt")
+        .assert()
+        .stdout("File: test.txt\nhello world\n\nFile: single-line.txt\nSingle Line\n")
+        .stderr("");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn file_with_invalid_utf8_filename() {
+    use std::ffi::OsStr;
+    use std::fs::File;
+    use std::io::Write;
+    use std::os::unix::ffi::OsStrExt;
+
+    use tempdir::TempDir;
+
+    let tmp_dir = TempDir::new("bat_test").expect("can create temporary directory");
+    let file_path = tmp_dir
+        .path()
+        .join(OsStr::from_bytes(b"test-invalid-utf8-\xC3(.rs"));
+    {
+        let mut file = File::create(&file_path).expect("can create temporary file");
+        writeln!(file, "dummy content").expect("can write to file");
+    }
+
+    bat()
+        .arg(file_path.as_os_str())
+        .assert()
+        .success()
+        .stdout("dummy content\n");
+}
+
+#[test]
+fn do_not_panic_regression_tests() {
+    for filename in &[
+        "issue_28.md",
+        "issue_190.md",
+        "issue_314.hs",
+        "issue_914.rb",
+        "issue_915.vue",
+    ] {
+        bat()
+            .arg("--color=always")
+            .arg(&format!("regression_tests/{}", filename))
+            .assert()
+            .success();
+    }
+}
+
+#[test]
+fn do_not_detect_different_syntax_for_stdin_and_files() {
+    let file = "regression_tests/issue_985.js";
+
+    let cmd_for_file = bat()
+        .arg("--color=always")
+        .arg("--map-syntax=*.js:Markdown")
+        .arg(&format!("--file-name={}", file))
+        .arg("--style=plain")
+        .arg(file)
+        .assert()
+        .success();
+
+    let cmd_for_stdin = bat()
+        .arg("--color=always")
+        .arg("--map-syntax=*.js:Markdown")
+        .arg("--style=plain")
+        .arg(&format!("--file-name={}", file))
+        .pipe_stdin(Path::new(EXAMPLES_DIR).join(file))
+        .unwrap()
+        .assert()
+        .success();
+
+    assert_eq!(
+        from_utf8(&cmd_for_file.get_output().stdout).expect("output is valid utf-8"),
+        from_utf8(&cmd_for_stdin.get_output().stdout).expect("output is valid utf-8")
+    );
+}
+
+#[test]
+fn show_all_mode() {
+    bat()
+        .arg("--show-all")
+        .arg("nonprintable.txt")
+        .assert()
+        .stdout("hello·world␊\n├──┤␍␀␇␈␛")
+        .stderr("");
 }

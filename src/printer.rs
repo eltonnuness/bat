@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::io::Write;
 use std::vec::Vec;
 
@@ -21,26 +20,26 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::assets::HighlightingAssets;
 use crate::config::Config;
-use crate::decorations::{Decoration, GridBorderDecoration, LineNumberDecoration};
 #[cfg(feature = "git")]
 use crate::decorations::LineChangesDecoration;
+use crate::decorations::{Decoration, GridBorderDecoration, LineNumberDecoration};
 #[cfg(feature = "git")]
-use crate::diff::{get_git_diff, LineChanges};
-use crate::errors::*;
-use crate::inputfile::{InputFile, InputFileReader};
+use crate::diff::LineChanges;
+use crate::error::*;
+use crate::input::OpenedInput;
 use crate::line_range::RangeCheckResult;
 use crate::preprocessor::{expand_tabs, replace_nonprintable};
 use crate::terminal::{as_terminal_escaped, to_ansi_color};
-use crate::wrap::OutputWrap;
+use crate::wrapping::WrappingMode;
 
-pub trait Printer {
+pub(crate) trait Printer {
     fn print_header(
         &mut self,
         handle: &mut dyn Write,
-        file: InputFile,
-        file_name: Option<&str>,
+        input: &OpenedInput,
+        add_header_padding: bool,
     ) -> Result<()>;
-    fn print_footer(&mut self, handle: &mut dyn Write) -> Result<()>;
+    fn print_footer(&mut self, handle: &mut dyn Write, input: &OpenedInput) -> Result<()>;
 
     fn print_snip(&mut self, handle: &mut dyn Write) -> Result<()>;
 
@@ -53,25 +52,27 @@ pub trait Printer {
     ) -> Result<()>;
 }
 
-pub struct SimplePrinter;
+pub struct SimplePrinter<'a> {
+    config: &'a Config<'a>
+}
 
-impl SimplePrinter {
-    pub fn new() -> Self {
-        SimplePrinter {}
+impl<'a> SimplePrinter<'a> {
+    pub fn new(config: &'a Config) -> Self {
+        SimplePrinter { config }
     }
 }
 
-impl Printer for SimplePrinter {
+impl<'a> Printer for SimplePrinter<'a> {
     fn print_header(
         &mut self,
         _handle: &mut dyn Write,
-        _file: InputFile,
-        _file_name: Option<&str>,
+        _input: &OpenedInput,
+        _add_header_padding: bool,
     ) -> Result<()> {
         Ok(())
     }
 
-    fn print_footer(&mut self, _handle: &mut dyn Write) -> Result<()> {
+    fn print_footer(&mut self, _handle: &mut dyn Write, _input: &OpenedInput) -> Result<()> {
         Ok(())
     }
 
@@ -87,13 +88,21 @@ impl Printer for SimplePrinter {
         line_buffer: &[u8],
     ) -> Result<()> {
         if !out_of_range {
-            handle.write_all(line_buffer)?;
+            if self.config.show_nonprintable {
+                let line = replace_nonprintable(line_buffer, self.config.tab_width);
+                write!(handle, "{}", line)?;
+                if line_buffer.last() == Some(&b'\n') {
+                    writeln!(handle)?;
+                }
+            } else {
+                handle.write_all(line_buffer)?
+            };
         }
         Ok(())
     }
 }
 
-pub struct InteractivePrinter<'a> {
+pub(crate) struct InteractivePrinter<'a> {
     colors: Colors,
     config: &'a Config<'a>,
     decorations: Vec<Box<dyn Decoration>>,
@@ -101,19 +110,19 @@ pub struct InteractivePrinter<'a> {
     ansi_prefix_sgr: String,
     content_type: Option<ContentType>,
     #[cfg(feature = "git")]
-    pub line_changes: Option<LineChanges>,
+    pub line_changes: &'a Option<LineChanges>,
     highlighter: Option<HighlightLines<'a>>,
     syntax_set: &'a SyntaxSet,
     background_color_highlight: Option<Color>,
 }
 
 impl<'a> InteractivePrinter<'a> {
-    pub fn new(
+    pub(crate) fn new(
         config: &'a Config,
         assets: &'a HighlightingAssets,
-        file: InputFile,
-        reader: &mut InputFileReader,
-    ) -> Self {
+        input: &mut OpenedInput,
+        #[cfg(feature = "git")] line_changes: &'a Option<LineChanges>,
+    ) -> Result<Self> {
         let theme = assets.get_theme(&config.theme);
 
         let background_color_highlight = theme.settings.line_highlight;
@@ -157,43 +166,38 @@ impl<'a> InteractivePrinter<'a> {
             panel_width = 0;
         }
 
-        #[cfg(feature = "git")]
-        let mut line_changes = None;
-
-        let highlighter = if reader
+        let highlighter = if input
+            .reader
             .content_type
             .map_or(false, |c| c.is_binary() && !config.show_nonprintable)
         {
             None
         } else {
-            // Get the Git modifications
-            #[cfg(feature = "git")]
-            {
-                if config.style_components.changes() {
-                    if let InputFile::Ordinary(filename) = file {
-                        line_changes = get_git_diff(filename);
-                    }
-                }
-            }
-
             // Determine the type of syntax for highlighting
-            let syntax = assets.get_syntax(config.language, file, reader, &config.syntax_mapping);
+            let syntax = match assets.get_syntax(config.language, input, &config.syntax_mapping) {
+                Ok(syntax) => syntax,
+                Err(Error(ErrorKind::UndetectedSyntax(_), _)) => {
+                    assets.syntax_set.find_syntax_plain_text()
+                }
+                Err(e) => return Err(e),
+            };
+
             Some(HighlightLines::new(syntax, theme))
         };
 
-        InteractivePrinter {
+        Ok(InteractivePrinter {
             panel_width,
             colors,
             config,
             decorations,
-            content_type: reader.content_type,
+            content_type: input.reader.content_type,
             ansi_prefix_sgr: String::new(),
             #[cfg(feature = "git")]
             line_changes,
             highlighter,
             syntax_set: &assets.syntax_set,
             background_color_highlight,
-        }
+        })
     }
 
     fn print_horizontal_line(&mut self, handle: &mut dyn Write, grid_char: char) -> Result<()> {
@@ -225,7 +229,7 @@ impl<'a> InteractivePrinter<'a> {
             if self.config.style_components.grid() {
                 format!("{} │ ", text_filled)
             } else {
-                format!("{}", text_filled)
+                text_filled
             }
         }
     }
@@ -234,6 +238,7 @@ impl<'a> InteractivePrinter<'a> {
         if self.config.tab_width > 0 {
             expand_tabs(text, self.config.tab_width, cursor)
         } else {
+            *cursor += text.len();
             text.to_string()
         }
     }
@@ -243,31 +248,21 @@ impl<'a> Printer for InteractivePrinter<'a> {
     fn print_header(
         &mut self,
         handle: &mut dyn Write,
-        file: InputFile,
-        file_name: Option<&str>,
+        input: &OpenedInput,
+        add_header_padding: bool,
     ) -> Result<()> {
         if !self.config.style_components.header() {
             if Some(ContentType::BINARY) == self.content_type && !self.config.show_nonprintable {
-                let input = match file {
-                    InputFile::Ordinary(filename) => format!(
-                        "file '{}'",
-                        file_name.unwrap_or(&filename.to_string_lossy())
-                    ),
-                    _ => file_name.unwrap_or("STDIN").to_owned(),
-                };
-
                 writeln!(
                     handle,
                     "{}: Binary content from {} will not be printed to the terminal \
                      (but will be present if the output of 'bat' is piped). You can use 'bat -A' \
                      to show the binary file contents.",
                     Yellow.paint("[bat warning]"),
-                    input
+                    input.description.summary(),
                 )?;
-            } else {
-                if self.config.style_components.grid() {
-                    self.print_horizontal_line(handle, '┬')?;
-                }
+            } else if self.config.style_components.grid() {
+                self.print_horizontal_line(handle, '┬')?;
             }
             return Ok(());
         }
@@ -284,16 +279,11 @@ impl<'a> Printer for InteractivePrinter<'a> {
                     .paint(if self.panel_width > 0 { "│ " } else { "" }),
             )?;
         } else {
+            if add_header_padding {
+                writeln!(handle)?;
+            }
             write!(handle, "{}", " ".repeat(self.panel_width))?;
         }
-
-        let (prefix, name) = match file {
-            InputFile::Ordinary(filename) => (
-                "File: ",
-                Cow::from(file_name.unwrap_or(&filename.to_string_lossy()).to_owned()),
-            ),
-            _ => ("File: ", Cow::from(file_name.unwrap_or("STDIN").to_owned())),
-        };
 
         let mode = match self.content_type {
             Some(ContentType::BINARY) => "   <BINARY>",
@@ -303,11 +293,16 @@ impl<'a> Printer for InteractivePrinter<'a> {
             _ => "",
         };
 
+        let description = &input.description;
+
         writeln!(
             handle,
             "{}{}{}",
-            prefix,
-            self.colors.filename.paint(name),
+            description
+                .kind()
+                .map(|kind| format!("{}: ", kind))
+                .unwrap_or("".into()),
+            self.colors.filename.paint(description.title()),
             mode
         )?;
 
@@ -322,7 +317,7 @@ impl<'a> Printer for InteractivePrinter<'a> {
         Ok(())
     }
 
-    fn print_footer(&mut self, handle: &mut dyn Write) -> Result<()> {
+    fn print_footer(&mut self, handle: &mut dyn Write, _input: &OpenedInput) -> Result<()> {
         if self.config.style_components.grid()
             && (self.content_type.map_or(false, |c| c.is_text()) || self.config.show_nonprintable)
         {
@@ -345,9 +340,9 @@ impl<'a> Printer for InteractivePrinter<'a> {
         let snip_right =
             " ─".repeat((self.config.term_width - panel_count - snip_left_count - title_count) / 2);
 
-        write!(
+        writeln!(
             handle,
-            "{}\n",
+            "{}",
             self.colors
                 .grid
                 .paint(format!("{}{}{}{}", panel, snip_left, title, snip_right))
@@ -422,7 +417,7 @@ impl<'a> Printer for InteractivePrinter<'a> {
         }
 
         // Line contents.
-        if self.config.output_wrap == OutputWrap::None {
+        if self.config.wrapping_mode == WrappingMode::NoWrapping {
             let true_color = self.config.true_color;
             let colored_output = self.config.colored_output;
             let italics = self.config.use_italic_text;

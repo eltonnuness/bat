@@ -1,29 +1,38 @@
-pub use crate::inputfile::InputFile;
-pub use crate::line_range::{HighlightedLineRanges, LineRange, LineRanges};
-pub use crate::style::{StyleComponent, StyleComponents};
-pub use crate::syntax_mapping::{MappingTarget, SyntaxMapping};
-pub use crate::wrap::OutputWrap;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
+use crate::line_range::{HighlightedLineRanges, LineRanges};
 #[cfg(feature = "paging")]
-pub enum PagingMode {
-    Always,
-    QuitIfOneScreen,
-    Never,
+use crate::paging::PagingMode;
+use crate::style::StyleComponents;
+use crate::syntax_mapping::SyntaxMapping;
+use crate::wrapping::WrappingMode;
+
+#[derive(Debug, Clone)]
+pub enum VisibleLines {
+    /// Show all lines which are included in the line ranges
+    Ranges(LineRanges),
+
+    #[cfg(feature = "git")]
+    /// Only show lines surrounding added/deleted/modified lines
+    DiffContext(usize),
 }
 
-#[cfg(feature = "paging")]
-impl Default for PagingMode {
+impl VisibleLines {
+    pub fn diff_mode(&self) -> bool {
+        match self {
+            Self::Ranges(_) => false,
+            #[cfg(feature = "git")]
+            Self::DiffContext(_) => true,
+        }
+    }
+}
+
+impl Default for VisibleLines {
     fn default() -> Self {
-        PagingMode::Never
+        VisibleLines::Ranges(LineRanges::default())
     }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct Config<'a> {
-    /// List of files to print
-    pub files: Vec<InputFile<'a>>,
-
     /// The explicitly configured language, if any
     pub language: Option<&'a str>,
 
@@ -49,15 +58,15 @@ pub struct Config<'a> {
     /// Style elements (grid, line numbers, ...)
     pub style_components: StyleComponents,
 
-    /// Text wrapping mode
-    pub output_wrap: OutputWrap,
+    /// If and how text should be wrapped
+    pub wrapping_mode: WrappingMode,
 
     /// Pager or STDOUT
     #[cfg(feature = "paging")]
     pub paging_mode: PagingMode,
 
-    /// Specifies the lines that should be printed
-    pub line_ranges: LineRanges,
+    /// Specifies which lines should be printed
+    pub visible_lines: VisibleLines,
 
     /// The syntax highlighting theme
     pub theme: String,
@@ -73,19 +82,13 @@ pub struct Config<'a> {
 
     /// Ranges of lines which should be highlighted with a special background color
     pub highlighted_lines: HighlightedLineRanges,
-
-    /// Names of files to display when printing
-    pub filenames: Option<Vec<&'a str>>,
 }
 
 #[test]
 fn default_config_should_include_all_lines() {
     use crate::line_range::RangeCheckResult;
 
-    assert_eq!(
-        Config::default().line_ranges.check(17),
-        RangeCheckResult::InRange
-    );
+    assert_eq!(LineRanges::default().check(17), RangeCheckResult::InRange);
 }
 
 #[test]

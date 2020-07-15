@@ -14,10 +14,13 @@ pub fn config_file() -> PathBuf {
         .unwrap_or_else(|| PROJECT_DIRS.config_dir().join("config"))
 }
 
-pub fn generate_config_file() -> bat::errors::Result<()> {
+pub fn generate_config_file() -> bat::error::Result<()> {
     let config_file = config_file();
     if config_file.exists() {
-        println!("A config file already exists at: {}", config_file.to_string_lossy());
+        println!(
+            "A config file already exists at: {}",
+            config_file.to_string_lossy()
+        );
 
         print!("Overwrite? (y/N): ");
         io::stdout().flush()?;
@@ -31,32 +34,51 @@ pub fn generate_config_file() -> bat::errors::Result<()> {
         let config_dir = config_file.parent();
         match config_dir {
             Some(path) => fs::create_dir_all(path)?,
-            None => return Ok(Err(format!("Unable to write config file to: {}", config_file.to_string_lossy()))?),
+            None => {
+                return Err(format!(
+                    "Unable to write config file to: {}",
+                    config_file.to_string_lossy()
+                )
+                .into());
+            }
         }
     }
 
-    let default_config = r#"# bat config
+    let default_config =
+        r#"# This is `bat`s configuration file. Each line either contains a comment or
+# a command-line option that you want to pass to `bat` by default. You can
+# run `bat --help` to get a list of all possible configuration options.
 
-# Specify desired theme (e.g. "TwoDark").  Issue `bat --list-themes` for a list of all available themes
+# Specify desired highlighting theme (e.g. "TwoDark"). Run `bat --list-themes`
+# for a list of all available themes
 #--theme="TwoDark"
 
-# Enable this to use italic text on the terminal (not supported on all terminals):
+# Enable this to use italic text on the terminal. This is not supported on all
+# terminal emulators (like tmux, by default):
 #--italic-text=always
 
 # Uncomment the following line to disable automatic paging:
 #--paging=never
 
-# Use C++ syntax for .ino files
-#--map-syntax "*.ino:C++"
+# Uncomment the following line if you are using less version >= 551 and want to
+# enable mouse scrolling support in `bat` when running inside tmux. This might
+# disable text selection, unless you press shift.
+#--pager="less --RAW-CONTROL-CHARS --quit-if-one-screen --mouse"
 
-# Use ".gitignore"-style highlighting for ".ignore" files
+# Syntax mappings: map a certain filename pattern to a language.
+#   Example 1: use the C++ syntax for .ino files
+#   Example 2: Use ".gitignore"-style highlighting for ".ignore" files
+#--map-syntax "*.ino:C++"
 #--map-syntax ".ignore:Git Ignore"
 "#;
 
     fs::write(&config_file, default_config)?;
-    println!("Success! Config file written to {}", config_file.to_string_lossy());
+    println!(
+        "Success! Config file written to {}",
+        config_file.to_string_lossy()
+    );
 
-    return Ok(());
+    Ok(())
 }
 
 pub fn get_args_from_config_file() -> Result<Vec<OsString>, shell_words::ParseError> {

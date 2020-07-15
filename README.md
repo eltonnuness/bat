@@ -12,8 +12,8 @@
   <a href="#how-to-use">How To Use</a> •
   <a href="#installation">Installation</a> •
   <a href="#customization">Customization</a> •
-  <a href="#project-goals-and-alternatives">Project goals, alternatives</a> •
-  Translation [<a href="https://github.com/chinanf-boy/bat-zh">中文</a>][<a href="doc/README-ja.md">日本語</a>][<a href="doc/README-ko.md">한국어</a>]
+  <a href="#project-goals-and-alternatives">Project goals, alternatives</a><br>
+  [<a href="https://github.com/chinanf-boy/bat-zh">中文</a>] [<a href="doc/README-ja.md">日本語</a>] [<a href="doc/README-ko.md">한국어</a>] [<a href="doc/README-ru.md">Русский</a>]
 </p>
 
 ### Syntax highlighting
@@ -62,7 +62,9 @@ Display multiple files at once
 > bat src/*.rs
 ```
 
-Read from stdin, determine the syntax automatically
+Read from stdin, determine the syntax automatically (note, highlighting will
+only work if the syntax can be determined from the first line of the file,
+usually through a shebang such as `#!/bin/sh`)
 
 ```bash
 > curl -s https://sh.rustup.rs | bat
@@ -168,19 +170,36 @@ The [`prettybat`](https://github.com/eth-p/bat-extras/blob/master/doc/prettybat.
 
 [![Packaging status](https://repology.org/badge/vertical-allrepos/bat.svg)](https://repology.org/project/bat/versions)
 
-### On Ubuntu
+### On Ubuntu (using `apt`)
 *... and other Debian-based Linux distributions.*
 
-You can install [the Ubuntu `bat` package](https://packages.ubuntu.com/eoan/bat) or [the Debian `bat` package](https://packages.debian.org/sid/bat) since Ubuntu Eoan 19.10 or Debian unstable sid.
+`bat` is making its way through the [Ubuntu](https://packages.ubuntu.com/eoan/bat) and
+[Debian](https://packages.debian.org/sid/bat) package release process, and is available
+for Ubuntu as of Eoan 19.10. On Debian `bat` is currently only available on the unstable
+"Sid" branch.
+
+If your Ubuntu/Debian installation is new enough you can simply run:
 
 ```bash
 apt install bat
 ```
 
-If you want to run the latest release of bat or if you are on older versions of Ubuntu/Debian, download the latest `.deb` package from the [release page](https://github.com/sharkdp/bat/releases)
-and install it via:
+If you install `bat` this way, please note that the executable may be installed as `batcat` instead of `bat` (due to [a name
+clash with another package](https://github.com/sharkdp/bat/issues/982)). You can set up a `bat -> batcat` symlink or alias to prevent any issues that may come up because of this and to be consistent with other distributions:
+``` bash
+mkdir -p ~/.local/bin
+ln -s /usr/bin/batcat ~/.local/bin/bat
+```
+
+### On Ubuntu (using most recent `.deb` packages)
+*... and other Debian-based Linux distributions.*
+
+If the package has not yet been promoted to your Ubuntu/Debian installation, or you want
+the most recent release of `bat`, download the latest `.deb` package from the
+[release page](https://github.com/sharkdp/bat/releases) and install it via:
+
 ```bash
-sudo dpkg -i bat_0.13.0_amd64.deb  # adapt version number and architecture
+sudo dpkg -i bat_0.15.4_amd64.deb  # adapt version number and architecture
 ```
 
 ### On Alpine Linux
@@ -275,6 +294,10 @@ port install bat
 There are a few options to install `bat` on Windows. Once you have installed `bat`,
 take a look at the ["Using `bat` on Windows"](#using-bat-on-windows) section.
 
+#### Prerequisites
+
+You will need to install the [Visual C++ Redistributable](https://support.microsoft.com/en-us/help/2977003/the-latest-supported-visual-c-downloads) package.
+
 #### With Chocolatey
 
 You can install `bat` via [Chocolatey](https://chocolatey.org/packages/Bat):
@@ -289,49 +312,11 @@ You can install `bat` via [scoop](https://scoop.sh/):
 scoop install bat
 ```
 
-You will need to install the [Visual C++ Redistributable](https://support.microsoft.com/en-us/help/2977003/the-latest-supported-visual-c-downloads) package.
-
 #### From prebuilt binaries:
 
 You can download prebuilt binaries from the [Release page](https://github.com/sharkdp/bat/releases),
 
 You will need to install the [Visual C++ Redistributable](https://support.microsoft.com/en-us/help/2977003/the-latest-supported-visual-c-downloads) package.
-
-### Via Docker
-
-There is a [Docker image](https://hub.docker.com/r/danlynn/bat/) that you can use to run `bat` in a container:
-```bash
-docker pull danlynn/bat
-alias bat='docker run -it --rm -e BAT_THEME -e BAT_STYLE -e BAT_TABS -v "$(pwd):/myapp" danlynn/bat'
-```
-
-### Via Ansible
-
-You can install `bat` with [Ansible](https://www.ansible.com/):
-
-```bash
-# Install role on local machine
-ansible-galaxy install aeimer.install_bat
-```
-
-```yaml
----
-# Playbook to install bat
-- host: all
-  roles:
-    - aeimer.install_bat
-```
-
-- [Ansible Galaxy](https://galaxy.ansible.com/aeimer/install_bat)
-- [GitHub](https://github.com/aeimer/ansible-install-bat)
-
-This should work with the following distributions:
-- Debian/Ubuntu
-- ARM (eg. Raspberry PI)
-- Arch Linux
-- Void Linux
-- FreeBSD
-- MacOS
 
 ### From binaries
 
@@ -341,14 +326,12 @@ binaries are also available: look for archives with `musl` in the file name.
 
 ### From source
 
-If you want to build `bat` from source, you need Rust 1.37 or
+If you want to build `bat` from source, you need Rust 1.40 or
 higher. You can then use `cargo` to build everything:
 
 ```bash
-cargo install bat
+cargo install --locked bat
 ```
-
-On some platforms, you might need to install `llvm` and/or `libclang-dev`.
 
 ## Customization
 
@@ -461,11 +444,21 @@ If you want to enable mouse-wheel scrolling on older versions of `less`, you can
 in the example above, this will disable the quit-if-one-screen feature). For less 530 or newer,
 it should work out of the box.
 
+### Indentation
+
+`bat` expands tabs to 4 spaces by itself, not relying on the pager. To change this, simply add the
+`--tabs` argument with the number of spaces you want to be displayed.
+
+**Note**: Defining tab stops for the pager (via the `--pager` argument by `bat`, or via the `LESS`
+environment variable for `less`) won't be taken into account because the pager will already get
+expanded spaces instead of tabs. This behaviour is added to avoid indentation issues caused by the
+sidebar. Calling `bat` with `--tabs=0` will override it and let tabs be consumed by the pager.
+
 ### Dark mode
 
 If you make use of the dark mode feature in macOS, you might want to configure `bat` to use a different
-theme based on the OS theme. The following snippet uses the `default` theme when in the light mode
-and the `GitHub` theme when in the dark mode.
+theme based on the OS theme. The following snippet uses the `default` theme when in the _dark mode_
+and the `GitHub` theme when in the _light mode_.
 
 ```bash
 alias cat="bat --theme=\$(defaults read -globalDomain AppleInterfaceStyle &> /dev/null && echo default || echo GitHub)"
@@ -515,6 +508,10 @@ Example configuration file:
 ## Using `bat` on Windows
 
 `bat` mostly works out-of-the-box on Windows, but a few features may need extra configuration.
+
+### Prerequisites
+
+You will need to install the [Visual C++ Redistributable](https://support.microsoft.com/en-us/help/2977003/the-latest-supported-visual-c-downloads) package.
 
 ### Paging
 
@@ -599,11 +596,11 @@ cargo build --bins
 cargo test
 
 # Install (release version)
-cargo install
+cargo install --locked
 
 # Build a bat binary with modified syntaxes and themes
 bash assets/create.sh
-cargo install -f
+cargo install --locked --force
 ```
 
 ## Maintainers

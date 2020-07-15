@@ -1,9 +1,9 @@
-use crate::errors::*;
+use crate::error::*;
 
 #[derive(Debug, Clone)]
 pub struct LineRange {
-    pub lower: usize,
-    pub upper: usize,
+    lower: usize,
+    upper: usize,
 }
 
 impl Default for LineRange {
@@ -16,6 +16,13 @@ impl Default for LineRange {
 }
 
 impl LineRange {
+    pub fn new(from: usize, to: usize) -> Self {
+        LineRange {
+            lower: from,
+            upper: to,
+        }
+    }
+
     pub fn from(range_raw: &str) -> Result<LineRange> {
         LineRange::parse_range(range_raw)
     }
@@ -23,7 +30,7 @@ impl LineRange {
     fn parse_range(range_raw: &str) -> Result<LineRange> {
         let mut new_range = LineRange::default();
 
-        if range_raw.bytes().nth(0).ok_or("Empty line range")? == b':' {
+        if range_raw.bytes().next().ok_or("Empty line range")? == b':' {
             new_range.upper = range_raw[1..].parse()?;
             return Ok(new_range);
         } else if range_raw.bytes().last().ok_or("Empty line range")? == b':' {
